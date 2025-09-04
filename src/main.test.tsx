@@ -1,17 +1,27 @@
-import { renderHook, act, render } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { ExternalStore } from "./main";
 
-class CounterStore extends ExternalStore<{ count: number }> {
+abstract class AbstractCounterStore extends ExternalStore<{ count: number }> {
   constructor(public incrementer = 1) {
     super({ count: 0 });
   }
 
+  abstract increment(): void;
+
+  abstract decrement(): void;
+}
+
+class CounterStore extends AbstractCounterStore {
   increment() {
     this.setState((prev) => ({ count: prev.count + this.incrementer }));
   }
 
   decrement() {
     this.setState((prev) => ({ count: prev.count - this.incrementer }));
+  }
+
+  reset() {
+    this.setState({ count: 0 });
   }
 }
 
@@ -93,8 +103,10 @@ test("uses a store as a hook", () => {
   const store = new CounterStore(5);
 
   const { result } = renderHook(() => store.use());
+  const { result: resultWithSelector } = renderHook(() => store.use((state) => state.count));
 
   expect(result.current[0]).toEqual({ count: 0 });
+  expect(resultWithSelector.current[0]).toEqual(0);
 
   act(() => {
     result.current[1].increment();
@@ -102,12 +114,21 @@ test("uses a store as a hook", () => {
   });
 
   expect(result.current[0]).toEqual({ count: 10 });
+  expect(resultWithSelector.current[0]).toEqual(10);
 
   act(() => {
     result.current[1].decrement();
   });
 
   expect(result.current[0]).toEqual({ count: 5 });
+  expect(resultWithSelector.current[0]).toEqual(5);
+
+  act(() => {
+    result.current[1].reset();
+  });
+
+  expect(result.current[0]).toEqual({ count: 0 });
+  expect(resultWithSelector.current[0]).toEqual(0);
 });
 
 test("uses a store with async actions as a hook", async () => {
@@ -151,91 +172,94 @@ describe("ExternalStore.createStoreProvider", () => {
   const store = new AsyncCounterStore();
 
   const [TestStoreProvider, useTestStore] = ExternalStore.createProvider(store);
+  const [AbstractProvider, useAbstractStore] = ExternalStore.createProvider<AbstractCounterStore>("CounterStore");
 
-  const App = () => {
-    const [state, actions] = useTestStore();
-
-    return (
-      <div>
-        <span data-testid="count">{state.count}</span>
-        <span data-testid="loading">{Number(state.loading)}</span>
-        <button
-          data-testid="increment"
-          onClick={() => actions.incrementAsync()}
-        >
-          Increment
-        </button>
-        <button
-          data-testid="decrement"
-          onClick={() => actions.decrementAsync()}
-        >
-          Decrement
-        </button>
-      </div>
-    );
-  };
-
-  test("use the store via context provider", async () => {
+  test("use the store via hook without the context provider", async () => {
     vi.useFakeTimers();
 
-    const { getByTestId } = render(<App />, { wrapper: TestStoreProvider });
+    const { result } = renderHook(() => useTestStore());
 
-    expect(getByTestId("count").textContent).toBe("0");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 0 });
 
     await act(async () => {
-      getByTestId("increment").click();
+      result.current[1].incrementAsync();
       vi.advanceTimersByTime(50);
       await Promise.resolve();
     });
 
-    expect(getByTestId("count").textContent).toBe("0");
-    expect(getByTestId("loading").textContent).toBe("1");
+    expect(result.current[0]).toEqual({ loading: true, count: 0 });
 
     await act(async () => {
       vi.advanceTimersByTime(150);
       await Promise.resolve();
     });
 
-    expect(getByTestId("count").textContent).toBe("1");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 1 });
 
     await act(async () => {
-      getByTestId("decrement").click();
+      result.current[1].decrementAsync();
       vi.advanceTimersByTime(200);
       await Promise.resolve();
     });
 
-    expect(getByTestId("count").textContent).toBe("0");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 0 });
   });
 
   test("can inject test store via provider", async () => {
     const testStore = new TestAsyncCounterStore();
 
-    const { getByTestId } = render(<App />, {
-      wrapper: ({ children }) => (
-        <TestStoreProvider store={testStore}>{children}</TestStoreProvider>
-      ),
+    const { result } = renderHook(() => useTestStore(), {
+      wrapper: ({ children }) => <TestStoreProvider store={testStore}>{children}</TestStoreProvider>,
     });
 
-    expect(getByTestId("count").textContent).toBe("0");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 0 });
 
     await act(async () => {
-      getByTestId("increment").click();
+      result.current[1].incrementAsync();
       await Promise.resolve();
     });
 
-    expect(getByTestId("count").textContent).toBe("1");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 1 });
 
     await act(async () => {
-      getByTestId("decrement").click();
+      result.current[1].decrementAsync();
       await Promise.resolve();
     });
 
-    expect(getByTestId("count").textContent).toBe("0");
-    expect(getByTestId("loading").textContent).toBe("0");
+    expect(result.current[0]).toEqual({ loading: false, count: 0 });
+  });
+
+  test("creates a provider and hook for an abstract store", () => {
+    const store = new CounterStore(3);
+
+    const { result } = renderHook(() => useAbstractStore((s) => s.count), {
+      wrapper: ({ children }) => <AbstractProvider store={store}>{children}</AbstractProvider>,
+    });
+
+    expect(result.current[0]).toEqual(0);
+
+    act(() => {
+      result.current[1].increment();
+      result.current[1].increment();
+    });
+
+    expect(result.current[0]).toEqual(6);
+  });
+
+  test("abstract hook throws if used outside of a abstract provider", () => {
+    expect(() => renderHook(() => useAbstractStore())).toThrowError("Hook must be used within a ExternalStoreProvider(CounterStore)");
+  });
+
+  test("type check: does not provide methods that are not part of the abstract store", () => {
+    const store = new CounterStore(3);
+
+    const { result } = renderHook(() => useAbstractStore(), {
+      wrapper: ({ children }) => <AbstractProvider store={store}>{children}</AbstractProvider>,
+    });
+
+    // @ts-expect-error
+    result.current[1].reset;
+
+    store.reset;
   });
 });

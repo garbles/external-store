@@ -1,5 +1,5 @@
 {
-  "name": "ext-store",
+  "name": "@garbles/external-store",
   "version": "1.0.0",
   "description": "A convenience wrapper for use with `React.useSyncExternalStore`",
   "main": "build/main.js",
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/garbles/ext-store.git"
+    "url": "git+ssh://git@github.com/garbles/external-store.git"
   },
   "keywords": [
     "react",
@@ -20,9 +20,9 @@
   "author": "Gabe Scholz",
   "license": "MPL-2.0",
   "bugs": {
-    "url": "https://github.com/garbles/ext-store/issues"
+    "url": "https://github.com/garbles/external-store/issues"
   },
-  "homepage": "https://github.com/garbles/ext-store#readme",
+  "homepage": "https://github.com/garbles/external-store#readme",
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.0",

@@ -1,6 +1,6 @@
 {
   "name": "@garbles/external-store",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A convenience wrapper for use with `React.useSyncExternalStore`",
   "main": "build/main.js",
   "scripts": {

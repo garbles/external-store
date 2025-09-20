@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "A convenience wrapper for use with `React.useSyncExternalStore`",
   "main": "build/main.js",
+  "types": "build/main.d.ts",
   "scripts": {
     "build": "tsc -p ./tsconfig.build.json",
     "test": "vitest",

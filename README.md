@@ -4,7 +4,7 @@ A type-safe, object-oriented React state management library built on `useSyncExt
 
 It's essentially an object-oriented `zustand` but with slightly better compile-time support for test mocking.
 
-## ✨ Key Features
+## Key Features
 
 - **Object-Oriented**: Clean class-based architecture with encapsulated state and methods
 - **Type-Safe**: Full TypeScript support with automatic action extraction and type inference
@@ -74,7 +74,7 @@ function CountDisplay() {
 }
 ```
 
-## 📚 Advanced Usage
+## Advanced Usage
 
 ### Provider Pattern
 

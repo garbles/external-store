@@ -5,6 +5,7 @@
   "main": "build/main.js",
   "types": "build/main.d.ts",
   "scripts": {
+    "prepublish": "npm run test && npm run typecheck && npm run build",
     "build": "tsc -p ./tsconfig.build.json",
     "test": "vitest",
     "typecheck": "tsc"

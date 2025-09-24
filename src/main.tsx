@@ -13,18 +13,41 @@ type Selector<T, U> = (state: T) => U;
 
 type State<S> = S extends ExternalStore<infer U> ? U : never;
 interface Use<S extends ExternalStore<any>> {
-  (): [State<S>, Actions<S>];
-  <U>(selector: Selector<State<S>, U>): [U, Actions<S>];
+  (): [State<S>, Actions<S, ExternalStore<any>>];
+  <U>(selector: Selector<State<S>, U>): [U, Actions<S, ExternalStore<any>>];
 }
+
+type Actions<S extends ExternalStore<any>, B = ExternalStore<any>> = Expand<OnlyMethods<Omit<S, keyof B>>>;
+
+type CreateProviderResult<S extends ExternalStore<any>> = [React.FC<ProviderProps<S>>, Use<S>];
+
+type AsyncState<T> =
+  | { status: "uninitialized"; loading: false; refreshing: false; data: null; error: null }
+  | { status: "pending"; loading: true; refreshing: false; data: null; error: null }
+  | { status: "pending"; loading: true; refreshing: true; data: T; error: null }
+  | { status: "idle"; loading: false; refreshing: false; data: T; error: null }
+  | { status: "error"; loading: false; refreshing: false; data: null; error: Error };
+
+type AsyncExternalStoreOptions = {
+  suspense: boolean;
+};
+
+// type UseWithSuspense<S extends AsyncExternalStore<any>, O extends AsyncExternalStoreUseOptions> = S extends ExternalStore<any>
+//   ? O extends { suspense: true }
+//     ? {
+//         use(): [State<S>["data"], Actions<S, AsyncExternalStore<any>>];
+//         use<U>(selector: Selector<State<S>["data"], U>): [U, Actions<S, AsyncExternalStore<any>>];
+//       }
+//     : {
+//         use(): [State<S>, Actions<S, AsyncExternalStore<any>>];
+//         use<U>(selector: Selector<State<S>, U>): [U, Actions<S, AsyncExternalStore<any>>];
+//       }
+//   : never;
 
 type ProviderProps<S extends ExternalStore<any>> = {
   children: React.ReactNode;
   store: S;
 };
-
-type Actions<S extends ExternalStore<any>> = Expand<OnlyMethods<Omit<S, keyof ExternalStore<any>>>>;
-
-type CreateProviderResult<S extends ExternalStore<any>> = [React.FC<ProviderProps<S>>, Use<S>];
 
 const identity = <T,>(x: T): T => x;
 
@@ -101,7 +124,59 @@ export abstract class ExternalStore<T extends object> {
     return [state, this];
   }
 
+  reset(): void {
+    this.setState(this.#initialState);
+  }
+
+  hydrate(state: Partial<T>): void {
+    this.setState(state);
+  }
+
   #notify(): void {
     for (const fn of this.#subscribers) fn();
+  }
+}
+
+export abstract class AsyncExternalStore<T extends object> extends ExternalStore<AsyncState<T>> {
+  #controller: AbortController | null = null;
+
+  constructor(initialData?: T | null) {
+    if (!!initialData) {
+      super({ status: "idle", loading: false, refreshing: false, data: initialData, error: null });
+    } else {
+      super({ status: "uninitialized", loading: false, refreshing: false, data: null, error: null });
+    }
+  }
+
+  protected async setStateAsync(update: (prev: AsyncState<T>, signal: AbortSignal) => T): Promise<void> {
+    if (this.state.data === null) {
+      this.setState({ status: "pending", loading: true, refreshing: false, data: null, error: null });
+    } else {
+      this.setState({ status: "pending", loading: true, refreshing: true, data: this.state.data, error: null });
+    }
+
+    this.#controller?.abort();
+    const controller = new AbortController();
+    this.#controller = controller;
+
+    try {
+      const data = await update(this.state, controller.signal);
+
+      if (controller.signal.aborted) return;
+
+      this.setState({ status: "idle", loading: false, refreshing: false, data, error: null });
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+
+      let error: Error;
+
+      if (cause instanceof Error) {
+        error = cause;
+      } else {
+        error = new Error("An unknown error occurred", { cause });
+      }
+
+      this.setState({ status: "error", loading: false, refreshing: false, data: null, error });
+    }
   }
 }

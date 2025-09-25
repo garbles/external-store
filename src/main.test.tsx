@@ -97,18 +97,27 @@ test("type checks", () => {
    */
   syncStore.incrementer;
 
+  /**
+   * No issue
+   */
+  <AsyncProvider store={asyncStore}>
+    <div />
+  </AsyncProvider>;
+
+  /**
+   * Prevent creating a provider for a non-external-store
+   */
+
   const fakeStore = {
     use(): [{ count: number }, { increment(): void; decrement(): void; crash(): void }] {
       return [{ count: 0 }, { increment(): void {}, decrement(): void {}, crash(): void {} }];
     },
   };
 
-  /**
-   * Prevent creating a provider for a non-external-store
-   */
-
   // @ts-expect-error
-  <AsyncProvider store={fakeStore} />;
+  <AsyncProvider store={fakeStore}>
+    <div />
+  </AsyncProvider>;
 
   // @ts-ignore
   function App() {

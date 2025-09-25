@@ -83,7 +83,7 @@ test("type checks", () => {
   const asyncStore = new AsyncCounterStore();
 
   const [_Provider, useSyncStore] = ExternalStore.createProvider(syncStore);
-  const [_AsyncProvider, useAsyncStore] = ExternalStore.createProvider(asyncStore);
+  const [AsyncProvider, useAsyncStore] = ExternalStore.createProvider(asyncStore);
 
   /**
    * These members exist on the store, but should not be accessed directly from the hook.
@@ -96,6 +96,19 @@ test("type checks", () => {
    * This member is defined on the subclass, so it is accessible here, but not from the hook.
    */
   syncStore.incrementer;
+
+  const fakeStore = {
+    use(): [{ count: number }, { increment(): void; decrement(): void; crash(): void }] {
+      return [{ count: 0 }, { increment(): void {}, decrement(): void {}, crash(): void {} }];
+    },
+  };
+
+  /**
+   * Prevent creating a provider for a non-external-store
+   */
+
+  // @ts-expect-error
+  <AsyncProvider store={fakeStore} />;
 
   // @ts-ignore
   function App() {

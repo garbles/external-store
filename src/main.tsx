@@ -21,6 +21,7 @@ type Use<S extends BaseExternalStore<any, any>> = {
 };
 
 type Usable<S extends BaseExternalStore<any, any>> = {
+  [ExternalStoreSymbol]: true;
   use: Use<S>;
 };
 
@@ -78,7 +79,11 @@ const createSuspenseSelector = <T, U>(selector: Selector<T, U>) => {
 
 const identity = <T,>(x: T): T => x;
 
+const ExternalStoreSymbol = Symbol.for("external-store");
+
 abstract class BaseExternalStore<T extends object, U extends object> {
+  [ExternalStoreSymbol] = true as const;
+
   static createProvider<S extends BaseExternalStore<any, any>>(displayName?: string): CreateProviderResult<S>;
   static createProvider<S extends BaseExternalStore<any, any>>(store: S): CreateProviderResult<S>;
   static createProvider(arg: BaseExternalStore<any, any> | string = "Store"): CreateProviderResult<BaseExternalStore<any, any>> {

@@ -1,5 +1,5 @@
 import { act, renderHook, render } from "@testing-library/react";
-import { AsyncExternalStore, ExternalStore } from "./main";
+import { AsyncExternalStore, SyncExternalStore } from "./main";
 import React from "react";
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { hasError: boolean }> {
@@ -22,7 +22,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode; fallbac
   }
 }
 
-abstract class AbstractCounterStore extends ExternalStore<{ count: number }> {
+abstract class AbstractCounterStore extends SyncExternalStore<{ count: number }> {
   constructor(public incrementer = 1) {
     super({ count: 0 });
   }
@@ -52,20 +52,20 @@ class AsyncCounterStore extends AsyncExternalStore<{ count: number }> {
   }
 
   increment() {
-    this.setStateAsync(async (prev) => {
+    this.setStateAsync(async (_signal, state) => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const count = prev?.count ?? 0;
+      const count = state?.data?.count ?? 0;
 
       return { count: count + 1 };
     });
   }
 
   decrement() {
-    this.setStateAsync(async (prev) => {
+    this.setStateAsync(async (_signal, state) => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
-      const count = prev?.count ?? 0;
+      const count = state?.data?.count ?? 0;
 
       return { count: count - 1 };
     });
@@ -82,8 +82,8 @@ test("type checks", () => {
   const syncStore = new CounterStore();
   const asyncStore = new AsyncCounterStore();
 
-  const [_Provider, useSyncStore] = ExternalStore.createProvider(syncStore);
-  const [AsyncProvider, useAsyncStore] = ExternalStore.createProvider(asyncStore);
+  const [_Provider, useSyncStore] = SyncExternalStore.createProvider(syncStore);
+  const [_AsyncProvider, useAsyncStore] = SyncExternalStore.createProvider(asyncStore);
 
   /**
    * These members exist on the store, but should not be accessed directly from the hook.
@@ -96,28 +96,6 @@ test("type checks", () => {
    * This member is defined on the subclass, so it is accessible here, but not from the hook.
    */
   syncStore.incrementer;
-
-  /**
-   * No issue
-   */
-  <AsyncProvider store={asyncStore}>
-    <div />
-  </AsyncProvider>;
-
-  /**
-   * Prevent creating a provider for a non-external-store
-   */
-
-  const fakeStore = {
-    use(): [{ count: number }, { increment(): void; decrement(): void; crash(): void }] {
-      return [{ count: 0 }, { increment(): void {}, decrement(): void {}, crash(): void {} }];
-    },
-  };
-
-  // @ts-expect-error
-  <AsyncProvider store={fakeStore}>
-    <div />
-  </AsyncProvider>;
 
   // @ts-ignore
   function App() {
@@ -297,8 +275,8 @@ describe("AsyncExternalStore", () => {
 describe("ExternalStore.createProvider", () => {
   const store = new AsyncCounterStore();
 
-  const [AsyncTestStoreProvider, useAsyncTestStore] = ExternalStore.createProvider(store);
-  const [AbstractProvider, useAbstractStore] = ExternalStore.createProvider<AbstractCounterStore>("CounterStore");
+  const [AsyncTestStoreProvider, useAsyncTestStore] = SyncExternalStore.createProvider(store);
+  const [AbstractProvider, useAbstractStore] = SyncExternalStore.createProvider<AbstractCounterStore>("CounterStore");
 
   test("use the store via hook without the context provider", async () => {
     vi.useFakeTimers();

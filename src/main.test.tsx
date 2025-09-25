@@ -1,5 +1,26 @@
-import { act, renderHook } from "@testing-library/react";
-import { ExternalStore } from "./main";
+import { act, renderHook, render } from "@testing-library/react";
+import { AsyncExternalStore, ExternalStore } from "./main";
+import React from "react";
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode; fallback: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
+    super(props);
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  override state = { hasError: false };
+
+  override render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+
+    return this.props.children;
+  }
+}
 
 abstract class AbstractCounterStore extends ExternalStore<{ count: number }> {
   constructor(public incrementer = 1) {
@@ -20,62 +41,66 @@ class CounterStore extends AbstractCounterStore {
     this.setState((prev) => ({ count: prev.count - this.incrementer }));
   }
 
-  reset() {
-    this.setState({ count: 0 });
+  crash() {
+    throw new Error("Crash!");
   }
 }
 
-class AsyncCounterStore extends ExternalStore<{
-  loading: boolean;
-  count: number;
-}> {
-  constructor() {
-    super({ loading: false, count: 0 });
+class AsyncCounterStore extends AsyncExternalStore<{ count: number }> {
+  constructor(intialState?: { count: number }) {
+    super(intialState);
   }
 
-  async incrementAsync() {
-    this.setState((prev) => ({ loading: true, count: prev.count }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    this.setState((prev) => ({ loading: false, count: prev.count + 1 }));
+  increment() {
+    this.setStateAsync(async (prev) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const count = prev?.count ?? 0;
+
+      return { count: count + 1 };
+    });
   }
 
-  async decrementAsync() {
-    this.setState((prev) => ({ loading: true, count: prev.count }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    this.setState((prev) => ({ loading: false, count: prev.count - 1 }));
-  }
-}
+  decrement() {
+    this.setStateAsync(async (prev) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-class TestAsyncCounterStore extends AsyncCounterStore {
-  override async incrementAsync() {
-    this.setState((prev) => ({ loading: false, count: prev.count + 1 }));
+      const count = prev?.count ?? 0;
+
+      return { count: count - 1 };
+    });
   }
 
-  override async decrementAsync() {
-    this.setState((prev) => ({ loading: false, count: prev.count - 1 }));
+  crash() {
+    this.setStateAsync(async () => {
+      throw new Error("Crash!");
+    });
   }
 }
 
 test("type checks", () => {
-  const store = new CounterStore();
+  const syncStore = new CounterStore();
+  const asyncStore = new AsyncCounterStore();
 
-  const [_Provider, useStore] = ExternalStore.createProvider(store);
+  const [_Provider, useSyncStore] = ExternalStore.createProvider(syncStore);
+  const [_AsyncProvider, useAsyncStore] = ExternalStore.createProvider(asyncStore);
 
   /**
    * These members exist on the store, but should not be accessed directly from the hook.
    */
-  store.state;
-  store.use;
-  store.subscribe;
+  syncStore.state;
+  syncStore.use;
+  syncStore.subscribe;
 
   /**
    * This member is defined on the subclass, so it is accessible here, but not from the hook.
    */
-  store.incrementer;
+  syncStore.incrementer;
 
   // @ts-ignore
   function App() {
-    const [_state, actions] = useStore();
+    const [_state, syncActions] = useSyncStore();
+    const [_asyncState, asyncActions] = useAsyncStore();
 
     /**
      * These members exist on the JS object but ideally shouldn't be used,
@@ -83,19 +108,31 @@ test("type checks", () => {
      */
 
     // @ts-expect-error
-    actions.use;
+    syncActions.use;
 
     // @ts-expect-error
-    actions.state;
+    syncActions.state;
 
     // @ts-expect-error
-    actions.setState;
+    syncActions.setState;
 
     // @ts-expect-error
-    actions.incrementer;
+    syncActions.incrementer;
 
     // @ts-expect-error
-    actions.subscribe;
+    syncActions.subscribe;
+
+    // @ts-expect-error
+    syncActions.reset;
+
+    // @ts-expect-error
+    syncActions.hydrate;
+
+    // @ts-expect-error
+    asyncActions.use;
+
+    // @ts-expect-error
+    asyncActions.setStateAsync;
   }
 });
 
@@ -124,35 +161,11 @@ test("uses a store as a hook", () => {
   expect(resultWithSelector.current[0]).toEqual(5);
 
   act(() => {
-    result.current[1].reset();
+    store.reset();
   });
 
   expect(result.current[0]).toEqual({ count: 0 });
   expect(resultWithSelector.current[0]).toEqual(0);
-});
-
-test("uses a store with async actions as a hook", async () => {
-  vi.useFakeTimers();
-
-  const store = new AsyncCounterStore();
-
-  const { result } = renderHook(() => store.use());
-
-  expect(result.current[0]).toEqual({ loading: false, count: 0 });
-
-  act(() => {
-    result.current[1].incrementAsync();
-    vi.advanceTimersByTime(50);
-  });
-
-  expect(result.current[0]).toEqual({ loading: true, count: 0 });
-
-  await act(async () => {
-    vi.advanceTimersByTime(50);
-    await Promise.resolve();
-  });
-
-  expect(result.current[0]).toEqual({ loading: false, count: 1 });
 });
 
 test("does not require react to be able to test state changes", () => {
@@ -168,68 +181,158 @@ test("does not require react to be able to test state changes", () => {
   expect(store.state).toEqual({ count: 2 });
 });
 
-describe("ExternalStore.createStoreProvider", () => {
+describe("AsyncExternalStore", () => {
+  const Inner = (props: { store: AsyncCounterStore }) => {
+    const [count] = props.store.use((s) => s.count);
+
+    return <div data-testid="idle">{count}</div>;
+  };
+
+  const App = (props: { store: AsyncCounterStore }) => {
+    return (
+      <ErrorBoundary fallback={<div data-testid="error">Error!</div>}>
+        <React.Suspense fallback={<div data-testid="loading">Loading...</div>}>
+          <Inner store={props.store} />
+        </React.Suspense>
+      </ErrorBoundary>
+    );
+  };
+
+  test("multiple concurrent async updates will abort previous ones", async () => {
+    vi.useFakeTimers();
+
+    const store = new AsyncCounterStore();
+
+    const { result } = renderHook(() => store.use((s) => s.count));
+
+    await act(async () => store.hydrate({ count: 0 }));
+
+    expect(result.current[0]).toEqual(0);
+
+    await act(async () => {
+      result.current[1].increment();
+      result.current[1].increment();
+      result.current[1].increment();
+      result.current[1].increment();
+      result.current[1].increment();
+      result.current[1].decrement();
+      result.current[1].increment();
+
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(result.current[0]).toEqual(1);
+  });
+
+  test("async store will suspend until resolved", async () => {
+    vi.useFakeTimers();
+
+    const store = new AsyncCounterStore();
+
+    const { getByTestId } = render(<App store={store} />);
+
+    expect(getByTestId("loading")).toBeDefined();
+    expect(store.state).toMatchObject({ status: "uninitialized", loading: false, refreshing: false });
+
+    await act(async () => {
+      store.increment();
+      vi.advanceTimersByTime(50);
+      await Promise.resolve();
+    });
+
+    /**
+     * Still loading...
+     */
+    expect(getByTestId("loading")).toBeDefined();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(getByTestId("idle")).toBeDefined();
+    expect(getByTestId("idle").textContent).toEqual("1");
+  });
+
+  test("async store will show error boundary if rejected", async () => {
+    vi.useFakeTimers();
+    const store = new AsyncCounterStore();
+
+    const { getByTestId } = render(<App store={store} />);
+
+    expect(getByTestId("loading")).toBeDefined();
+
+    await act(async () => {
+      store.crash();
+      await Promise.resolve();
+    });
+
+    expect(getByTestId("error")).toBeDefined();
+  });
+});
+
+describe("ExternalStore.createProvider", () => {
   const store = new AsyncCounterStore();
 
-  const [TestStoreProvider, useTestStore] = ExternalStore.createProvider(store);
+  const [AsyncTestStoreProvider, useAsyncTestStore] = ExternalStore.createProvider(store);
   const [AbstractProvider, useAbstractStore] = ExternalStore.createProvider<AbstractCounterStore>("CounterStore");
 
   test("use the store via hook without the context provider", async () => {
     vi.useFakeTimers();
 
-    const { result } = renderHook(() => useTestStore());
+    const { result } = renderHook(() => useAsyncTestStore((state) => state.count));
 
-    expect(result.current[0]).toEqual({ loading: false, count: 0 });
+    /**
+     * Unitialized.
+     */
+    expect(result.current).toEqual(null);
+
+    await act(() => store.hydrate({ count: 0 }));
+
+    expect(result.current[0]).toEqual(0);
 
     await act(async () => {
-      result.current[1].incrementAsync();
+      result.current[1].increment();
       vi.advanceTimersByTime(50);
       await Promise.resolve();
     });
-
-    expect(result.current[0]).toEqual({ loading: true, count: 0 });
 
     await act(async () => {
       vi.advanceTimersByTime(150);
       await Promise.resolve();
     });
 
-    expect(result.current[0]).toEqual({ loading: false, count: 1 });
+    expect(result.current[0]).toEqual(1);
 
     await act(async () => {
-      result.current[1].decrementAsync();
+      result.current[1].decrement();
       vi.advanceTimersByTime(200);
       await Promise.resolve();
     });
 
-    expect(result.current[0]).toEqual({ loading: false, count: 0 });
+    expect(result.current[0]).toEqual(0);
   });
 
-  test("can inject test store via provider", async () => {
-    const testStore = new TestAsyncCounterStore();
+  test("can replace an async store with a sync one as long as they have the same actions", async () => {
+    const testStore = new CounterStore();
 
-    const { result } = renderHook(() => useTestStore(), {
-      wrapper: ({ children }) => <TestStoreProvider store={testStore}>{children}</TestStoreProvider>,
+    const { result } = renderHook(() => useAsyncTestStore((state) => state.count), {
+      wrapper: ({ children }) => <AsyncTestStoreProvider store={testStore}>{children}</AsyncTestStoreProvider>,
     });
 
-    expect(result.current[0]).toEqual({ loading: false, count: 0 });
+    expect(result.current[0]).toEqual(0);
 
-    await act(async () => {
-      result.current[1].incrementAsync();
-      await Promise.resolve();
-    });
+    await act(() => result.current[1].increment());
 
-    expect(result.current[0]).toEqual({ loading: false, count: 1 });
+    expect(result.current[0]).toEqual(1);
 
-    await act(async () => {
-      result.current[1].decrementAsync();
-      await Promise.resolve();
-    });
+    await act(() => result.current[1].decrement());
 
-    expect(result.current[0]).toEqual({ loading: false, count: 0 });
+    expect(result.current[0]).toEqual(0);
   });
 
-  test("creates a provider and hook for an abstract store", () => {
+  test("creates a provider and hook for an abstract store", async () => {
     const store = new CounterStore(3);
 
     const { result } = renderHook(() => useAbstractStore((s) => s.count), {
@@ -238,7 +341,7 @@ describe("ExternalStore.createStoreProvider", () => {
 
     expect(result.current[0]).toEqual(0);
 
-    act(() => {
+    await act(async () => {
       result.current[1].increment();
       result.current[1].increment();
     });
